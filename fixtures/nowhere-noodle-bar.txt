@@ -1,0 +1,15 @@
+NOWHERE NOODLE BAR  (fictional sample menu)
+
+STARTERS
+Paper Dumplings (6)            6.50
+Cucumber Salad                 4.00
+
+NOODLES
+Brothy Noodles - choose broth: Mild, Spicy (+0.50)
+  with tofu                    11.00
+  with chicken                 12.00
+Dry Noodle Bowl                10.50
+
+DRINKS
+Iced Tea (S / L)               2.00 / 3.00
+Plum Soda                      3.25

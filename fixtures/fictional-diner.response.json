@@ -1,0 +1,16 @@
+{
+  "restaurantName": "Fictional Diner",
+  "restaurantType": "breakfast",
+  "items": [
+    { "name": "Two Egg Plate", "section": "Breakfast", "kind": "food", "description": "Two eggs any style with toast.", "price": 8.5, "modifierGroup": "Egg Add-Ons" },
+    { "name": "Pancake Stack", "section": "Breakfast", "kind": "food", "description": "Three buttermilk pancakes.", "price": 9.25, "modifierGroup": null },
+    { "name": "The Classic", "section": "Burgers", "kind": "food", "description": "Beef patty, lettuce, tomato.", "price": 11.0, "modifierGroup": "Burger Cook" },
+    { "name": "Veggie Burger", "section": "Burgers", "kind": "food", "price": 10.5, "modifierGroup": null },
+    { "name": "Drip Coffee", "section": "Drinks", "kind": "beverage", "price": 2.75 },
+    { "name": "House Lager", "section": "Drinks", "kind": "bar", "price": 5.0, "priceVariants": { "bar": 5.0 } }
+  ],
+  "modifierGroups": [
+    { "name": "Egg Add-Ons", "sections": [ { "name": "Add-Ons", "min": 0, "max": 2, "options": [ { "name": "Bacon", "price": 2.0 }, { "name": "Avocado", "price": 1.5 } ] } ] },
+    { "name": "Burger Cook", "sections": [ { "name": "Cook", "min": 1, "max": 1, "options": [ { "name": "Medium", "price": 0 }, { "name": "Well Done", "price": 0 } ] } ] }
+  ]
+}

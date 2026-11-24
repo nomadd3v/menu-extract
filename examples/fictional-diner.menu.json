@@ -1,0 +1,102 @@
+{
+  "schemaVersion": "1.0",
+  "restaurantName": "Fictional Diner",
+  "restaurantType": "breakfast",
+  "categories": [
+    {
+      "name": "Breakfast",
+      "items": [
+        {
+          "name": "Two Egg Plate",
+          "description": "Two eggs any style with toast.",
+          "kind": "food",
+          "price": 8.5,
+          "modifierGroup": "Egg Add-Ons"
+        },
+        {
+          "name": "Pancake Stack",
+          "description": "Three buttermilk pancakes.",
+          "kind": "food",
+          "price": 9.25
+        }
+      ]
+    },
+    {
+      "name": "Burgers",
+      "items": [
+        {
+          "name": "The Classic",
+          "description": "Beef patty, lettuce, tomato.",
+          "kind": "food",
+          "price": 11,
+          "modifierGroup": "Burger Cook"
+        },
+        {
+          "name": "Veggie Burger",
+          "kind": "food",
+          "price": 10.5
+        }
+      ]
+    },
+    {
+      "name": "Drinks",
+      "items": [
+        {
+          "name": "Drip Coffee",
+          "kind": "beverage",
+          "price": 2.75
+        },
+        {
+          "name": "House Lager",
+          "kind": "bar",
+          "price": 5,
+          "priceVariants": {
+            "bar": 5
+          }
+        }
+      ]
+    }
+  ],
+  "modifierGroups": [
+    {
+      "name": "Egg Add-Ons",
+      "sections": [
+        {
+          "name": "Add-Ons",
+          "min": 0,
+          "max": 2,
+          "options": [
+            {
+              "name": "Bacon",
+              "price": 2
+            },
+            {
+              "name": "Avocado",
+              "price": 1.5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Burger Cook",
+      "sections": [
+        {
+          "name": "Cook",
+          "min": 1,
+          "max": 1,
+          "options": [
+            {
+              "name": "Medium",
+              "price": 0
+            },
+            {
+              "name": "Well Done",
+              "price": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

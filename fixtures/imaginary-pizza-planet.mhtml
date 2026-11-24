@@ -1,0 +1,18 @@
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="----=_Part_42"
+
+------=_Part_42
+Content-Type: text/html
+Content-Transfer-Encoding: quoted-printable
+Content-Location: https://example.com/menu
+
+<html><head><title>Imaginary Pizza Planet - Menu</title></head><body>
+<h1>Imaginary Pizza Planet (fictional)</h1>
+<h2>Pizza</h2>
+<p>Margherita Moon 12 / 16 inch =E2=80=94 $13.00 / $17.00</p>
+<p>Comet Pepperoni $14.50</p>
+<p>Toppings: mushroom, olives, onion +$1.25 each (up to 4)</p>
+<h2>Sides</h2>
+<p>Garlic Knots $5.00</p>
+</body></html>
+------=_Part_42--

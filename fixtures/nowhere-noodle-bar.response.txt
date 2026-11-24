@@ -1,0 +1,21 @@
+```json
+{
+  "restaurantName": "Nowhere Noodle Bar",
+  "restaurantType": "asian",
+  "items": [
+    { "name": "Paper Dumplings (6)", "section": "Starters", "kind": "food", "price": "$6.50" },
+    { "name": "Cucumber Salad", "section": "Starters", "kind": "food", "price": 4 },
+    { "name": "Brothy Noodles with Tofu", "section": "Noodles", "kind": "Food", "price": 11, "modifierGroup": "Broth" },
+    { "name": "Brothy Noodles with Chicken", "section": "Noodles", "kind": "Food", "price": 12, "modifierGroup": "broth" },
+    { "name": "Dry Noodle Bowl", "section": "Noodles", "kind": "food", "price": 10.5 },
+    { "name": "Iced Tea", "section": "Drinks", "kind": "drink", "price": 2, "modifierGroup": "Drink Size" },
+    { "name": "Plum Soda", "section": "Drinks", "kind": "beverage", "price": 3.25 },
+    { "name": "", "section": "Drinks", "kind": "beverage", "price": 1 },
+    { "name": "Mystery Item", "section": "Drinks", "kind": "dessert", "price": 1 }
+  ],
+  "modifierGroups": [
+    { "name": "Broth", "sections": [ { "name": "Broth", "min": 1, "max": 1, "options": [ { "name": "Mild", "price": 0 }, { "name": "Spicy", "price": 0.5 } ] } ] },
+    { "name": "Drink Size", "sections": [ { "name": "Size", "min": 1, "max": 1, "options": [ { "name": "Small", "price": 0 }, { "name": "Large", "price": 1 } ] } ] }
+  ]
+}
+```

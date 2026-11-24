@@ -1,0 +1,16 @@
+{
+  "restaurantName": "Imaginary Pizza Planet",
+  "restaurantType": "pizza",
+  "items": [
+    { "name": "Margherita Moon", "section": "Pizza", "kind": "food", "price": 13, "modifierGroup": "Pizza Toppings" },
+    { "name": "Comet Pepperoni", "section": "Pizza", "kind": "food", "price": 14.5, "modifierGroup": "Pizza Toppings" },
+    { "name": "Garlic Knots", "section": "Sides", "kind": "food", "price": 5, "modifierGroup": "Does Not Exist" }
+  ],
+  "modifierGroups": [
+    { "name": "Pizza Toppings", "sections": [
+      { "name": "Size", "min": 1, "max": 1, "options": [ { "name": "12 inch", "price": 0 }, { "name": "16 inch", "price": 4 } ] },
+      { "name": "Toppings", "min": 0, "max": 4, "options": [ { "name": "Mushroom", "price": 1.25 }, { "name": "Olives", "price": 1.25 }, { "name": "Onion", "price": 1.25 } ] }
+    ] },
+    { "name": "Unused Group", "sections": [ { "name": "X", "min": 3, "max": 1, "options": [ { "name": "Y", "price": "free" } ] } ] }
+  ]
+}
