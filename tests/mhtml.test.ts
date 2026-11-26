@@ -1,90 +1,108 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import { extractFromBuffer, MockLlmClient } from "../src/index.js";
 import { parseMhtml } from "../src/input/mhtml.js";
+import { at, expectError } from "./helpers.js";
 
-function buildMhtml(parts: { type: string; encoding?: string; body: string; location?: string }[]): Buffer {
-  const boundary = "----=_Part_123";
-  let content = `MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary="${boundary}"\r\n\r\n`;
+interface Part {
+  type: string;
+  encoding?: string;
+  location?: string;
+  body: string;
+}
 
+const BOUNDARY = "----=_Part_123";
+
+function buildMhtml(parts: Part[]): Buffer {
+  let content = `MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary="${BOUNDARY}"\r\n\r\n`;
   for (const part of parts) {
-    content += `\r\n------=_Part_123\r\n`;
-    content += `Content-Type: ${part.type}\r\n`;
+    content += `\r\n--${BOUNDARY}\r\nContent-Type: ${part.type}\r\n`;
     if (part.encoding) content += `Content-Transfer-Encoding: ${part.encoding}\r\n`;
     if (part.location) content += `Content-Location: ${part.location}\r\n`;
     content += `\r\n${part.body}`;
   }
-  content += `\r\n------=_Part_123--\r\n`;
-
-  return Buffer.from(content, "utf-8");
+  return Buffer.from(`${content}\r\n--${BOUNDARY}--\r\n`, "utf8");
 }
 
+/** Base64 long enough to pass the tiny-image filter. */
+const IMAGE_BASE64 = Buffer.from("A".repeat(200)).toString("base64");
+
 describe("parseMhtml", () => {
-  it("extracts HTML text from MHTML", () => {
-    const buf = buildMhtml([
-      { type: "text/html", body: "<h1>Menu</h1><p>Burger $10</p>" },
-    ]);
-    const { html, images } = parseMhtml(buf);
-    expect(html).toContain("Menu");
-    expect(html).toContain("Burger");
-    expect(images).toHaveLength(0);
+  it("extracts the HTML part", () => {
+    const { html, images } = parseMhtml(
+      buildMhtml([{ type: "text/html", body: "<h1>Menu</h1><p>Burger $10</p>" }]),
+    );
+    expect(html).toBe("<h1>Menu</h1><p>Burger $10</p>");
+    expect(images).toEqual([]);
   });
 
-  it("extracts embedded images", () => {
-    // Needs >100 base64 chars to pass the filter
-    const imgBase64 = Buffer.from("A".repeat(200)).toString("base64");
-    const buf = buildMhtml([
-      { type: "text/html", body: "<p>Menu</p>" },
-      {
-        type: "image/png",
-        encoding: "base64",
-        body: imgBase64,
-        location: "https://example.com/logo.png",
-      },
-    ]);
-    const { html, images } = parseMhtml(buf);
-    expect(html).toContain("Menu");
-    expect(images).toHaveLength(1);
-    expect(images[0].name).toBe("logo.png");
-    expect(images[0].mimeType).toBe("image/png");
+  it("extracts embedded images with their file name", () => {
+    const { images } = parseMhtml(
+      buildMhtml([
+        { type: "text/html", body: "<p>Menu</p>" },
+        {
+          type: "image/png",
+          encoding: "base64",
+          body: IMAGE_BASE64,
+          location: "https://example.com/a/logo.png?v=2",
+        },
+      ]),
+    );
+    expect(images).toEqual([{ name: "logo.png", mimeType: "image/png", base64: IMAGE_BASE64 }]);
   });
 
-  it("decodes quoted-printable HTML", () => {
-    const buf = buildMhtml([
-      { type: "text/html", encoding: "quoted-printable", body: "Price=3D$10" },
-    ]);
-    const { html } = parseMhtml(buf);
-    expect(html).toContain("Price=$10");
+  it("skips tiny images such as tracking pixels", () => {
+    const tiny = Buffer.from("x").toString("base64");
+    const { images } = parseMhtml(
+      buildMhtml([{ type: "image/png", encoding: "base64", body: tiny }]),
+    );
+    expect(images).toEqual([]);
+  });
+
+  it("decodes quoted-printable, including soft breaks and multi-byte UTF-8", () => {
+    const body = "Price=3D$10 Caf=C3=A9 =E2=80=94 soft=\r\nbreak";
+    const { html } = parseMhtml(
+      buildMhtml([{ type: "text/html", encoding: "quoted-printable", body }]),
+    );
+    expect(html).toBe("Price=$10 Café — softbreak");
   });
 
   it("decodes base64 HTML", () => {
-    const encoded = Buffer.from("<p>Hello</p>").toString("base64");
-    const buf = buildMhtml([
-      { type: "text/html", encoding: "base64", body: encoded },
-    ]);
-    const { html } = parseMhtml(buf);
-    expect(html).toContain("Hello");
+    const body = Buffer.from("<p>Hello</p>").toString("base64");
+    expect(parseMhtml(buildMhtml([{ type: "text/html", encoding: "base64", body }])).html).toBe(
+      "<p>Hello</p>",
+    );
   });
 
-  it("falls back to raw text when no boundary found", () => {
-    const raw = Buffer.from("Just some plain text without MIME structure");
-    const { html, images } = parseMhtml(raw);
-    expect(html).toBe("Just some plain text without MIME structure");
-    expect(images).toHaveLength(0);
-  });
-
-  it("skips small images (< 100 base64 chars)", () => {
-    const tinyBase64 = Buffer.from("x").toString("base64"); // very short
-    const buf = buildMhtml([
-      { type: "text/html", body: "<p>Menu</p>" },
-      { type: "image/png", encoding: "base64", body: tinyBase64, location: "tiny.png" },
-    ]);
-    const { images } = parseMhtml(buf);
-    expect(images).toHaveLength(0);
+  it("falls back to the raw text when there is no MIME boundary", () => {
+    const raw = "Just some plain text without MIME structure";
+    expect(parseMhtml(Buffer.from(raw))).toEqual({ html: raw, images: [] });
   });
 });
 
-describe("quoted-printable", () => {
-  it("decodes multi-byte UTF-8 sequences correctly", () => {
-    const { html } = parseMhtml(buildMhtml([{ type: "text/html", encoding: "quoted-printable", body: "Caf=C3=A9 =E2=80=94 soft=\r\nbreak" }]));
-    expect(html).toContain("Café — softbreak");
+describe("MHTML in the pipeline", () => {
+  it("sends embedded images when the page has no text, capped at maxEmbeddedImages", async () => {
+    const images = ["image/png", "image/jpeg", "image/svg+xml", "image/png"].map((type) => ({
+      type,
+      encoding: "base64",
+      body: IMAGE_BASE64,
+    }));
+    const client = new MockLlmClient("[]");
+    const { warnings } = await extractFromBuffer(
+      buildMhtml([{ type: "text/html", body: "<img src=a.png>" }, ...images]),
+      "page.mhtml",
+      { client, maxEmbeddedImages: 2 },
+    );
+    const request = at(client.calls);
+    expect(request.text).toBeUndefined();
+    expect(request.images?.map((i) => i.mediaType)).toEqual(["image/png", "image/jpeg"]);
+    expect(warnings).toContain("MHTML has 3 images; only the first 2 were sent");
+  });
+
+  it("rejects a page with neither text nor usable images", async () => {
+    const empty = buildMhtml([{ type: "text/html", body: "<div></div>" }]);
+    await expectError(
+      () => extractFromBuffer(empty, "page.mhtml", { client: new MockLlmClient("[]") }),
+      "UNREADABLE_INPUT",
+    );
   });
 });
