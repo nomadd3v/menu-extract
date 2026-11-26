@@ -1,119 +1,56 @@
-import { describe, it, expect } from "vitest";
-import { htmlToText, extractImageUrls } from "../src/input/html.js";
+import { describe, expect, it } from "vitest";
+import { decodeEntities } from "../src/input/entities.js";
+import { extractPageTitle, htmlToText } from "../src/input/html.js";
 
 describe("htmlToText", () => {
-  it("strips HTML tags", () => {
-    const result = htmlToText("<p>Hello <strong>world</strong></p>");
-    expect(result).toContain("Hello");
-    expect(result).toContain("world");
-    expect(result).not.toContain("<");
+  it("strips tags", () => {
+    const text = htmlToText("<p>Hello <strong>world</strong></p>");
+    expect(text).toMatch(/^Hello\s+world$/);
   });
 
-  it("removes script tags and content", () => {
-    expect(htmlToText('<p>Menu</p><script>alert("xss")</script><p>Items</p>')).toBe(
-      "Menu\nItems",
-    );
-  });
-
-  it("removes style tags and content", () => {
+  it("removes script and style contents", () => {
+    expect(htmlToText('<p>Menu</p><script>alert("x")</script><p>Items</p>')).toBe("Menu\nItems");
     expect(htmlToText("<style>body{color:red}</style><p>Text</p>")).toBe("Text");
   });
 
-  it("decodes HTML entities", () => {
-    expect(htmlToText("Fish &amp; Chips &lt;$10&gt;")).toBe('Fish & Chips <$10>');
-  });
-
-  it("decodes &nbsp; to space", () => {
+  it("decodes entities after stripping, so encoded markup stays text", () => {
+    expect(htmlToText("Fish &amp; Chips &lt;$10&gt;")).toBe("Fish & Chips <$10>");
     expect(htmlToText("Hello&nbsp;World")).toBe("Hello World");
+    expect(htmlToText("&quot;Quoted&#39;s&quot;")).toBe('"Quoted\'s"');
   });
 
-  it("decodes &quot; and &#39;", () => {
-    expect(htmlToText("&quot;Quoted&#39;s&quot;")).toBe("\"Quoted's\"");
+  it("turns runs of whitespace into line breaks and trims", () => {
+    expect(htmlToText("  <p>Line 1</p>   <p>Line 2</p>  ")).toBe("Line 1\nLine 2");
   });
 
-  it("collapses multiple whitespace to newlines", () => {
-    const result = htmlToText("<p>Line 1</p>   <p>Line 2</p>");
-    expect(result).toContain("Line 1");
-    expect(result).toContain("Line 2");
-  });
-
-  it("caps output at 40KB", () => {
-    const longHtml = "<p>" + "A".repeat(50_000) + "</p>";
-    expect(htmlToText(longHtml).length).toBeLessThanOrEqual(40_000);
-  });
-
-  it("trims whitespace", () => {
-    expect(htmlToText("  <p>  Hello  </p>  ")).toBe("Hello");
-  });
-
-  it("returns empty string for empty input", () => {
+  it("returns an empty string for empty input", () => {
     expect(htmlToText("")).toBe("");
   });
 });
 
-describe("extractImageUrls", () => {
-  it("extracts favicon from link tags", () => {
-    const html = '<link rel="icon" href="/favicon.png">';
-    const urls = extractImageUrls(html, "https://example.com");
-    expect(urls).toContain("https://example.com/favicon.png");
+describe("extractPageTitle", () => {
+  it("keeps the part before a separator", () => {
+    expect(extractPageTitle("<title>Example Pizza | Menu</title>")).toBe("Example Pizza");
+    expect(extractPageTitle("<title>Example Grill — Dinner</title>")).toBe("Example Grill");
   });
 
-  it("extracts apple-touch-icon", () => {
-    const html = '<link rel="apple-touch-icon" href="/apple-icon.png">';
-    const urls = extractImageUrls(html, "https://example.com");
-    expect(urls).toContain("https://example.com/apple-icon.png");
+  it("decodes entities in the title", () => {
+    expect(extractPageTitle("<title>Fish &amp; Fry</title>")).toBe("Fish & Fry");
   });
 
-  it("adds /favicon.ico as fallback", () => {
-    const urls = extractImageUrls("", "https://example.com/page");
-    expect(urls).toContain("https://example.com/favicon.ico");
+  it("returns null when there is no usable title", () => {
+    expect(extractPageTitle("<p>no title</p>")).toBeNull();
+    expect(extractPageTitle("<title>   </title>")).toBeNull();
+  });
+});
+
+describe("decodeEntities", () => {
+  it("decodes named and numeric entities in one pass", () => {
+    expect(decodeEntities("&apos;&#8212;&#x2014;&AMP;")).toBe("'——&");
+    expect(decodeEntities("&amp;lt;")).toBe("&lt;");
   });
 
-  it("extracts img src attributes", () => {
-    const html = '<img src="/images/burger.jpg" alt="Burger">';
-    const urls = extractImageUrls(html, "https://example.com");
-    expect(urls).toContain("https://example.com/images/burger.jpg");
-  });
-
-  it("extracts data-src lazy-load attributes", () => {
-    const html = '<img data-src="/images/lazy.jpg">';
-    const urls = extractImageUrls(html, "https://example.com");
-    expect(urls).toContain("https://example.com/images/lazy.jpg");
-  });
-
-  it("extracts srcset URLs", () => {
-    const html = '<img srcset="/img/small.jpg 300w, /img/large.jpg 600w">';
-    const urls = extractImageUrls(html, "https://example.com");
-    expect(urls).toContain("https://example.com/img/small.jpg");
-  });
-
-  it("extracts CSS background-image URLs", () => {
-    const html = '<div style="background-image: url(https://cdn.example.com/bg.jpg)"></div>';
-    const urls = extractImageUrls(html, "https://example.com");
-    expect(urls).toContain("https://cdn.example.com/bg.jpg");
-  });
-
-  it("skips data: URIs", () => {
-    const html = '<img src="data:image/png;base64,abc123">';
-    const urls = extractImageUrls(html, "https://example.com");
-    const dataUrls = urls.filter((u) => u.startsWith("data:"));
-    expect(dataUrls).toHaveLength(0);
-  });
-
-  it("resolves relative URLs against base", () => {
-    const html = '<img src="menu/photo.jpg">';
-    const urls = extractImageUrls(html, "https://example.com/restaurant/");
-    expect(urls).toContain("https://example.com/restaurant/menu/photo.jpg");
-  });
-
-  it("returns favicons before other images", () => {
-    const html = `
-      <img src="/images/food.jpg">
-      <link rel="icon" href="/favicon.png">
-    `;
-    const urls = extractImageUrls(html, "https://example.com");
-    const faviconIdx = urls.findIndex((u) => u.includes("favicon.png"));
-    const foodIdx = urls.findIndex((u) => u.includes("food.jpg"));
-    expect(faviconIdx).toBeLessThan(foodIdx);
+  it("leaves unknown and invalid entities alone", () => {
+    expect(decodeEntities("&copy; &#0; &#x110000;")).toBe("&copy; &#0; &#x110000;");
   });
 });

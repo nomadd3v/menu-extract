@@ -1,140 +1,179 @@
-import { basename, extname } from "node:path";
+/**
+ * The public extraction pipeline: input → text or images → LLM → validated menu.
+ *
+ * @packageDocumentation
+ */
 import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
+import { detectKind, type InputKind } from "./detect.js";
+import { MenuExtractError } from "./errors.js";
+import type { LlmClient } from "./llm/types.js";
 import type { ExtractionResult } from "./model.js";
-import { parseModelResponse } from "./parse.js";
+import { parseModelResponse, type ParseHints } from "./parse.js";
+import { prepareInput, type PreparedInput } from "./prepare.js";
 import { SYSTEM_PROMPT } from "./prompt.js";
-import type { LlmClient, LlmImage } from "./llm/types.js";
-import { extractPageTitle, htmlToText } from "./input/html.js";
-import { parseMhtml } from "./input/mhtml.js";
-import { extractDocxText, extractPptxText, stripRtf } from "./input/office.js";
-import { extractPdfText, renderPdfPages } from "./input/pdf.js";
-import { normalizeRotation, resizeImage } from "./input/image.js";
 
-export type InputKind = "pdf" | "image" | "html" | "mhtml" | "docx" | "pptx" | "rtf" | "text";
-
+/** Options shared by every `extractFrom*` function. Only `client` is required. */
 export interface ExtractOptions {
+  /** The model to use: {@link AnthropicClient}, {@link MockLlmClient} or your own {@link LlmClient}. */
   client: LlmClient;
-  /** Output budget for the model. Default 16000. */
+  /** Output token budget for the model. Default `16000`. */
   maxTokens?: number;
-  /** A PDF with fewer extractable characters than this is treated as scanned and sent as page images. Default 200. */
+  /** Text longer than this is truncated (with a warning); there is no chunking. Default `40000`. */
+  maxTextChars?: number;
+  /** A PDF with less text than this is treated as scanned and sent as page images. Default `200`. */
   minPdfTextChars?: number;
+  /** Most PDF pages rendered for a scanned PDF. Default `30`. */
+  maxPdfPages?: number;
+  /** Photos are downscaled to fit this many pixels on the longest side (needs `sharp`). Default `2048`. */
+  maxImageDimension?: number;
+  /** Most embedded images sent from an image-only MHTML page. Default `5`. */
+  maxEmbeddedImages?: number;
+  /** `fetch` used by {@link extractFromUrl}; inject one to test offline. Defaults to the global `fetch`. */
+  fetch?: typeof fetch;
 }
 
-const IMAGE_MIME: Record<string, LlmImage["mediaType"]> = {
-  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
-};
+const DEFAULTS = {
+  maxTokens: 16_000,
+  maxTextChars: 40_000,
+  minPdfTextChars: 200,
+  maxPdfPages: 30,
+  maxImageDimension: 2048,
+  maxEmbeddedImages: 5,
+} as const;
 
-/** Decide the input kind from magic bytes first, then the file extension. */
-export function detectKind(buf: Buffer, filename = ""): InputKind {
-  const ext = extname(filename).toLowerCase();
-  if (buf.subarray(0, 5).toString("latin1") === "%PDF-") return "pdf";
-  if (buf[0] === 0x89 && buf.subarray(1, 4).toString("latin1") === "PNG") return "image";
-  if (buf[0] === 0xff && buf[1] === 0xd8) return "image";
-  if (buf.subarray(0, 4).toString("latin1") === "GIF8") return "image";
-  if (buf.subarray(0, 4).toString("latin1") === "RIFF" && buf.subarray(8, 12).toString("latin1") === "WEBP") return "image";
-  if (buf.subarray(0, 4).toString("latin1") === "PK\u0003\u0004") {
-    if (ext === ".pptx") return "pptx";
-    return "docx";
+const USER_AGENT = "menu-extract";
+
+/** Send prepared input to the model and validate the reply. */
+async function complete(input: PreparedInput, options: ExtractOptions): Promise<ExtractionResult> {
+  const maxTextChars = options.maxTextChars ?? DEFAULTS.maxTextChars;
+  const warnings = [...input.warnings];
+  let text = input.text?.trim();
+  if (text !== undefined) {
+    if (!text) {
+      throw new MenuExtractError("EMPTY_INPUT", "The input contains no text to extract from");
+    }
+    if (text.length > maxTextChars) {
+      warnings.push(`input text truncated from ${text.length} to ${maxTextChars} characters`);
+      text = text.slice(0, maxTextChars);
+    }
   }
-  if (buf.subarray(0, 5).toString("latin1") === "{\\rtf") return "rtf";
-  if (ext === ".mhtml" || ext === ".mht") return "mhtml";
-  if (/^MIME-Version:/i.test(buf.subarray(0, 200).toString("latin1")) || /^From:.*\nSubject:/i.test(buf.subarray(0, 200).toString("latin1"))) return "mhtml";
-  if (ext === ".html" || ext === ".htm") return "html";
-  const head = buf.subarray(0, 1000).toString("utf8").toLowerCase();
-  if (head.includes("<html") || head.includes("<!doctype html") || head.includes("<body")) return "html";
-  return "text";
-}
 
-function sniffImageMime(buf: Buffer, filename: string): LlmImage["mediaType"] {
-  if (buf[0] === 0x89) return "image/png";
-  if (buf[0] === 0xff) return "image/jpeg";
-  if (buf.subarray(0, 4).toString("latin1") === "GIF8") return "image/gif";
-  if (buf.subarray(0, 4).toString("latin1") === "RIFF") return "image/webp";
-  return IMAGE_MIME[extname(filename).toLowerCase()] ?? "image/jpeg";
-}
-
-async function run(
-  opts: ExtractOptions,
-  content: { text?: string; images?: LlmImage[] },
-  hints: { restaurantName?: string },
-): Promise<ExtractionResult> {
-  const res = await opts.client.complete({
+  const response = await options.client.complete({
     system: SYSTEM_PROMPT,
-    text: content.text,
-    images: content.images,
-    maxTokens: opts.maxTokens ?? 16000,
+    ...(text !== undefined ? { text } : { images: input.images ?? [] }),
+    maxTokens: options.maxTokens ?? DEFAULTS.maxTokens,
   });
-  return parseModelResponse(res.text, hints);
-}
-
-/** Extract a menu from plain text that has already been obtained. */
-export function extractFromText(text: string, opts: ExtractOptions, hints: { restaurantName?: string } = {}) {
-  if (!text.trim()) throw new Error("No text content to extract from");
-  return run(opts, { text }, hints);
-}
-
-/** Extract a menu from file bytes. The kind is auto-detected unless given. */
-export async function extractFromBuffer(
-  buf: Buffer,
-  filename: string,
-  opts: ExtractOptions,
-  kind: InputKind = detectKind(buf, filename),
-): Promise<ExtractionResult> {
-  switch (kind) {
-    case "image": {
-      const rotated = await normalizeRotation(buf);
-      const { buffer, resized } = await resizeImage(rotated);
-      const mediaType = resized ? "image/jpeg" : sniffImageMime(rotated, filename);
-      return run(opts, { images: [{ mediaType, base64: buffer.toString("base64") }] }, {});
-    }
-    case "pdf": {
-      const text = await extractPdfText(buf);
-      if (text.trim().length >= (opts.minPdfTextChars ?? 200)) return run(opts, { text }, {});
-      const pages = await renderPdfPages(buf);
-      if (pages.length === 0) {
-        if (text.trim()) return run(opts, { text }, {});
-        throw new Error('Could not read the PDF (scanned PDFs need the optional "mupdf" package)');
-      }
-      return run(opts, { images: pages.map((p) => ({ mediaType: p.mimeType, base64: p.base64 })) }, {});
-    }
-    case "mhtml": {
-      const { html, images } = parseMhtml(buf);
-      const text = htmlToText(html);
-      if (text) return run(opts, { text }, { restaurantName: extractPageTitle(html) ?? undefined });
-      const imgs = images
-        .filter((i) => i.mimeType in { "image/jpeg": 1, "image/png": 1, "image/gif": 1, "image/webp": 1 })
-        .slice(0, 5)
-        .map((i) => ({ mediaType: i.mimeType as LlmImage["mediaType"], base64: i.base64 }));
-      if (imgs.length === 0) throw new Error("MHTML contained no text or usable images");
-      return run(opts, { images: imgs }, {});
-    }
-    case "html": {
-      const html = buf.toString("utf8");
-      return extractFromText(htmlToText(html), opts, { restaurantName: extractPageTitle(html) ?? undefined });
-    }
-    case "docx":
-      return extractFromText(await extractDocxText(buf), opts);
-    case "pptx":
-      return extractFromText(await extractPptxText(buf), opts);
-    case "rtf":
-      return extractFromText(stripRtf(buf.toString("utf8")), opts);
-    default:
-      return extractFromText(buf.toString("utf8"), opts);
+  if (response.finishReason === "truncated") {
+    throw new MenuExtractError(
+      "LLM_TRUNCATED",
+      "The model hit its output limit before finishing; raise maxTokens or split the menu",
+    );
   }
+  if (response.finishReason === "refused") {
+    throw new MenuExtractError("LLM_REFUSED", "The model declined to process this input");
+  }
+
+  const result = parseModelResponse(response.text, input.hints);
+  return { menu: result.menu, warnings: [...warnings, ...result.warnings] };
 }
 
-export async function extractFromFile(path: string, opts: ExtractOptions) {
-  return extractFromBuffer(await readFile(path), basename(path), opts);
+/**
+ * Extract a menu from text you already have.
+ *
+ * @param text - Menu text.
+ * @param options - See {@link ExtractOptions}.
+ * @param hints - Fallbacks such as a restaurant name.
+ * @throws {@link MenuExtractError} `EMPTY_INPUT` for blank text, or any LLM / parse error.
+ */
+export async function extractFromText(
+  text: string,
+  options: ExtractOptions,
+  hints: ParseHints = {},
+): Promise<ExtractionResult> {
+  return complete({ text, hints, warnings: [] }, options);
 }
 
-/** Fetch a URL and extract from the page text. `fetchImpl` is injectable so tests stay offline. */
-export async function extractFromUrl(url: string, opts: ExtractOptions, fetchImpl: typeof fetch = fetch) {
-  const u = new URL(url);
-  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("Only http(s) URLs are supported");
-  const res = await fetchImpl(u, { headers: { "user-agent": "menu-extract/0.1" }, redirect: "follow" });
-  if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  const ct = res.headers.get("content-type") ?? "";
-  const kind = detectKind(buf, ct.includes("html") ? "page.html" : u.pathname);
-  return extractFromBuffer(buf, u.pathname, opts, kind);
+/**
+ * Extract a menu from file bytes. The format is detected from the bytes unless `kind` is given.
+ *
+ * @param buffer - File contents.
+ * @param filename - Original file name, used as a format hint (e.g. `.pptx` vs `.docx`).
+ * @param options - See {@link ExtractOptions}.
+ * @param kind - Skip detection and treat the input as this format.
+ * @throws {@link MenuExtractError} for unreadable input, a missing optional dependency, or
+ *   any LLM / parse error.
+ */
+export async function extractFromBuffer(
+  buffer: Buffer,
+  filename: string,
+  options: ExtractOptions,
+  kind: InputKind = detectKind(buffer, filename),
+): Promise<ExtractionResult> {
+  const input = await prepareInput(buffer, kind, {
+    minPdfTextChars: options.minPdfTextChars ?? DEFAULTS.minPdfTextChars,
+    maxPdfPages: options.maxPdfPages ?? DEFAULTS.maxPdfPages,
+    maxImageDimension: options.maxImageDimension ?? DEFAULTS.maxImageDimension,
+    maxEmbeddedImages: options.maxEmbeddedImages ?? DEFAULTS.maxEmbeddedImages,
+  });
+  return complete(input, options);
+}
+
+/**
+ * Extract a menu from a file on disk.
+ *
+ * @param path - Path to a PDF, image, HTML, MHTML, DOCX, PPTX, RTF or text file.
+ * @param options - See {@link ExtractOptions}.
+ * @throws {@link MenuExtractError}, or the file-system error if the file cannot be read.
+ */
+export async function extractFromFile(
+  path: string,
+  options: ExtractOptions,
+): Promise<ExtractionResult> {
+  return extractFromBuffer(await readFile(path), basename(path), options);
+}
+
+/**
+ * Fetch a URL with one plain GET (no crawling, no JavaScript) and extract from the response.
+ *
+ * @param url - An `http:` or `https:` URL.
+ * @param options - See {@link ExtractOptions}; set `fetch` to stay offline in tests.
+ * @throws {@link MenuExtractError} `UNSUPPORTED_URL` for other schemes or malformed URLs,
+ *   `FETCH_FAILED` for network errors and non-2xx responses, or any later pipeline error.
+ */
+export async function extractFromUrl(
+  url: string,
+  options: ExtractOptions,
+): Promise<ExtractionResult> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch (cause) {
+    throw new MenuExtractError("UNSUPPORTED_URL", `Not a valid URL: ${url}`, { cause });
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new MenuExtractError(
+      "UNSUPPORTED_URL",
+      `Only http(s) URLs are supported, got ${parsed.protocol}`,
+    );
+  }
+
+  const fetchImpl = options.fetch ?? fetch;
+  let res: Response;
+  try {
+    res = await fetchImpl(parsed, { headers: { "user-agent": USER_AGENT }, redirect: "follow" });
+  } catch (cause) {
+    throw new MenuExtractError("FETCH_FAILED", `Could not fetch ${parsed.href}`, { cause });
+  }
+  if (!res.ok) {
+    throw new MenuExtractError(
+      "FETCH_FAILED",
+      `Fetch failed with HTTP ${res.status}: ${parsed.href}`,
+    );
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const isHtml = (res.headers.get("content-type") ?? "").includes("html");
+  const kind = detectKind(buffer, isHtml ? "page.html" : parsed.pathname);
+  return extractFromBuffer(buffer, parsed.pathname, options, kind);
 }
