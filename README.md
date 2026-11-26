@@ -52,7 +52,7 @@ npx tsx src/cli.ts path/to/menu.pdf --out menu.json --csv menu.csv
 npx tsx src/cli.ts https://example.com/menu
 ```
 
-After `npm run build` (or once installed as a dependency) the same commands are available as `menu-extract`. The menu JSON goes to stdout or `--out`; a one-line summary and every warning go to stderr. Exit codes: `0` success, `1` extraction error, `2` bad usage.
+In a clone, `npm run build` produces `node dist/cli.js` with the same options; in a project that installed the package, run `npx menu-extract`. The menu JSON goes to stdout or `--out`; a one-line summary and every warning go to stderr. Exit codes: `0` success, `1` extraction error, `2` bad usage.
 
 ### Examples
 
@@ -226,7 +226,7 @@ The fixtures in [`fixtures/`](fixtures) are three fictional menus (HTML, plain t
 
 ## Provenance
 
-The input handlers and the prompt's pricing and modifier rules were adapted from earlier code by the same author, then reworked. The data model, validation layer, LLM interface, adapters, CLI and tests were written for this library. A multi-byte quoted-printable bug in the MHTML decoder was found and fixed while writing the tests.
+The input handlers and the prompt's pricing and modifier rules were adapted from earlier, unpublished code and then reworked. The data model, validation layer, LLM interface, adapters, CLI and tests were written for this library. A multi-byte quoted-printable bug in the MHTML decoder was found and fixed while writing the tests.
 
 ## License
 
