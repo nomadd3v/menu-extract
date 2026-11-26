@@ -1,5 +1,10 @@
 import { RESTAURANT_TYPES } from "./model.js";
 
+/**
+ * System prompt sent with every extraction. It fixes the JSON shape that
+ * {@link parseModelResponse} expects and the rules for prices and modifiers.
+ * Exported so you can reuse or adapt it in your own {@link LlmClient}.
+ */
 export const SYSTEM_PROMPT = `You are a restaurant menu extraction assistant. Extract ALL menu items and any modifier / customization options, and return them as one JSON object.
 
 Return a single JSON OBJECT with these keys:

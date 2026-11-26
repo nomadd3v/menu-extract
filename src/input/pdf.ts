@@ -1,108 +1,113 @@
 /**
- * Server-side PDF processing via mupdf.
- * Gracefully degrades if mupdf native binary is unavailable.
+ * PDF text extraction and page rendering via the optional peer `mupdf` (AGPL-3.0).
+ * `mupdf` is loaded lazily, only when a PDF is actually processed.
+ *
+ * @packageDocumentation
  */
+import { MenuExtractError } from "../errors.js";
 
-let mupdfModule: Record<string, unknown> | null = null;
-let mupdfLoaded = false;
+type Mupdf = typeof import("mupdf");
+type PdfDocument = InstanceType<Mupdf["Document"]>;
 
-async function getMupdf(): Promise<any> {
-  if (mupdfLoaded) return mupdfModule;
-  mupdfLoaded = true;
+/** Pages are rendered at 150 dpi: legible for the model, small enough to keep token cost down. */
+const RENDER_SCALE = 150 / 72;
+const JPEG_QUALITY = 82;
+
+let mupdfPromise: Promise<Mupdf> | undefined;
+
+function loadMupdf(): Promise<Mupdf> {
+  mupdfPromise ??= import("mupdf").catch((cause: unknown) => {
+    mupdfPromise = undefined;
+    throw new MenuExtractError(
+      "MISSING_DEPENDENCY",
+      'PDF input needs the optional peer dependency "mupdf" (AGPL-3.0): npm install mupdf',
+      { cause },
+    );
+  });
+  return mupdfPromise;
+}
+
+async function openPdf(buffer: Buffer): Promise<{ mupdf: Mupdf; doc: PdfDocument }> {
+  const mupdf = await loadMupdf();
   try {
-    mupdfModule = await import("mupdf");
-    return mupdfModule;
-  } catch {
-    console.warn("[menu-extract] optional dependency 'mupdf' not installed: PDF input is unavailable");
-    return null;
+    return { mupdf, doc: mupdf.Document.openDocument(buffer, "application/pdf") };
+  } catch (cause) {
+    throw new MenuExtractError("UNREADABLE_INPUT", "Could not open the PDF", { cause });
   }
 }
 
-const MAX_TEXT_LENGTH = 40_000;
+/** Text of a PDF, page by page. */
+export interface PdfText {
+  /** All page texts joined by a blank line. */
+  text: string;
+  /** Total number of pages in the document. */
+  pageCount: number;
+  /** Zero-based indexes of pages whose text could not be read. */
+  failedPages: number[];
+}
 
 /**
- * Extract text from a PDF buffer via mupdf.
- * Returns empty string if mupdf unavailable or extraction fails.
+ * Extract the text layer of every page.
+ *
+ * @param buffer - PDF bytes.
+ * @throws {@link MenuExtractError} `MISSING_DEPENDENCY` without `mupdf`, `UNREADABLE_INPUT`
+ *   when the bytes are not a readable PDF.
  */
-export async function extractPdfText(buffer: Buffer): Promise<string> {
-  const mupdf = await getMupdf();
-  if (!mupdf) return "";
-
-  try {
-    const doc = mupdf.Document.openDocument(buffer, "application/pdf");
-    const pageCount = doc.countPages();
-    const parts: string[] = [];
-
-    for (let i = 0; i < pageCount; i++) {
-      const page = doc.loadPage(i);
-      try {
-        const sText = page.toStructuredText("preserve-whitespace");
-        // Try asText() first, fall back to JSON parsing
-        try {
-          parts.push(sText.asText());
-        } catch {
-          const json = JSON.parse(sText.asJSON());
-          const lines: string[] = [];
-          for (const block of json.blocks ?? []) {
-            for (const line of block.lines ?? []) {
-              const text = (line.spans ?? [])
-                .map((s: { text: string }) => s.text)
-                .join("");
-              if (text.trim()) lines.push(text);
-            }
-          }
-          parts.push(lines.join("\n"));
-        }
-      } catch {
-        // Skip pages that fail to extract
-      }
+export async function extractPdfText(buffer: Buffer): Promise<PdfText> {
+  const { doc } = await openPdf(buffer);
+  const pageCount = doc.countPages();
+  const texts: string[] = [];
+  const failedPages: number[] = [];
+  for (let i = 0; i < pageCount; i++) {
+    try {
+      texts.push(doc.loadPage(i).toStructuredText("preserve-whitespace").asText().trim());
+    } catch {
+      failedPages.push(i);
     }
-
-    return parts.join("\n\n").slice(0, MAX_TEXT_LENGTH);
-  } catch {
-    return "";
   }
+  return { text: texts.filter(Boolean).join("\n\n"), pageCount, failedPages };
 }
 
+/** A PDF page rendered to an image. */
 export interface RenderedPage {
+  /** Zero-based page index. */
+  index: number;
+  mediaType: "image/jpeg";
+  /** JPEG bytes as base64 without a `data:` prefix. */
   base64: string;
-  mimeType: "image/jpeg";
 }
 
-const RENDER_DPI = 150;
-const RENDER_SCALE = RENDER_DPI / 72;
-const RENDER_QUALITY = 82;
-const MAX_RENDER_PAGES = 30;
+/** Rendered pages of a PDF. */
+export interface PdfRender {
+  pages: RenderedPage[];
+  /** Total number of pages in the document (may exceed the number rendered). */
+  pageCount: number;
+  /** Zero-based indexes of pages that failed to render. */
+  failedPages: number[];
+}
 
 /**
- * Render each PDF page to a compressed JPEG via mupdf.
- * Used for the visual fallback path instead of sending the raw PDF bytes —
- * allows us to control resolution and compression to reduce token cost.
- * Returns empty array if mupdf unavailable.
+ * Render pages to JPEG, for scanned PDFs that have no usable text layer.
+ *
+ * @param buffer - PDF bytes.
+ * @param maxPages - Render at most this many pages, from the first.
+ * @throws {@link MenuExtractError} `MISSING_DEPENDENCY` without `mupdf`, `UNREADABLE_INPUT`
+ *   when the bytes are not a readable PDF.
  */
-export async function renderPdfPages(buffer: Buffer): Promise<RenderedPage[]> {
-  const mupdf = await getMupdf();
-  if (!mupdf) return [];
-
-  try {
-    const doc = mupdf.Document.openDocument(buffer, "application/pdf");
-    const pageCount = Math.min(doc.countPages(), MAX_RENDER_PAGES);
-    const pages: RenderedPage[] = [];
-
-    for (let i = 0; i < pageCount; i++) {
-      try {
-        const page = doc.loadPage(i);
-        const matrix = mupdf.Matrix.scale(RENDER_SCALE, RENDER_SCALE);
-        const pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true);
-        const jpegBuf = Buffer.from(pixmap.asJPEG(RENDER_QUALITY));
-        pages.push({ base64: jpegBuf.toString("base64"), mimeType: "image/jpeg" });
-      } catch {
-        // Skip pages that fail to render
-      }
+export async function renderPdfPages(buffer: Buffer, maxPages: number): Promise<PdfRender> {
+  const { mupdf, doc } = await openPdf(buffer);
+  const pageCount = doc.countPages();
+  const matrix = mupdf.Matrix.scale(RENDER_SCALE, RENDER_SCALE);
+  const pages: RenderedPage[] = [];
+  const failedPages: number[] = [];
+  for (let i = 0; i < Math.min(pageCount, maxPages); i++) {
+    try {
+      const pixmap = doc.loadPage(i).toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true);
+      const base64 = Buffer.from(pixmap.asJPEG(JPEG_QUALITY)).toString("base64");
+      pages.push({ index: i, mediaType: "image/jpeg", base64 });
+    } catch {
+      failedPages.push(i);
     }
-
-    return pages;
-  } catch {
-    return [];
   }
+  return { pages, pageCount, failedPages };
 }
