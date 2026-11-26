@@ -1,38 +1,89 @@
 {
   "name": "menu-extract",
   "version": "0.1.0",
-  "description": "Turn restaurant menus (PDF, image, HTML, text, DOCX) into a validated, vendor-neutral JSON menu model using an LLM behind a swappable interface.",
+  "description": "Turn restaurant menus (PDF, image, HTML, MHTML, DOCX, PPTX, RTF, text) into a validated, vendor-neutral JSON menu model using an LLM behind a swappable interface.",
+  "keywords": [
+    "menu",
+    "restaurant",
+    "extraction",
+    "llm",
+    "pdf",
+    "ocr",
+    "json",
+    "zod",
+    "csv",
+    "typescript"
+  ],
+  "homepage": "https://github.com/nomadd3v/menu-extract#readme",
+  "bugs": {
+    "url": "https://github.com/nomadd3v/menu-extract/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nomadd3v/menu-extract.git"
+  },
   "license": "MIT",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "bin": { "menu-extract": "dist/cli.js" },
-  "files": ["dist", "fixtures", "README.md", "LICENSE"],
-  "engines": { "node": ">=20" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "menu-extract": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "fixtures",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "vitest run",
+    "examples": "tsx examples/basic.ts && tsx examples/custom-client.ts",
     "cli": "tsx src/cli.ts"
   },
   "dependencies": {
     "jszip": "^3.10.1",
-    "zod": "^3.24.4"
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "mupdf": "^1.27.0",
-    "sharp": "^0.34.0"
+    "sharp": "^0.34.0 || ^0.35.0"
   },
   "peerDependenciesMeta": {
-    "mupdf": { "optional": true },
-    "sharp": { "optional": true }
+    "mupdf": {
+      "optional": true
+    },
+    "sharp": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^22",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
     "mupdf": "^1.27.0",
-    "sharp": "^0.34.0",
+    "prettier": "^3.10.1",
+    "sharp": "^0.35.5",
     "tsx": "^4.19.0",
     "typescript": "^5.8",
-    "vitest": "^3.1.4"
+    "typescript-eslint": "^8.74.0",
+    "vitest": "^4.1.12"
   }
 }
